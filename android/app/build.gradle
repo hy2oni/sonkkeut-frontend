@@ -81,11 +81,11 @@ android {
 
     namespace "com.sonkkeut"
     defaultConfig {
-        applicationId "com.sonkkeut"
+        applicationId "com.sonkkeut.eventtest"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 9
-        versionName "0.1.8"
+        versionName "0.1.8-event-test"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // MediaPipe Tasks does not ship x86_64 JNI; package one consistent phone ABI.
         ndk { abiFilters "arm64-v8a" }

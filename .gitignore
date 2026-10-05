@@ -69,3 +69,5 @@ yarn-error.log
 **/build/
 .idea/
 .gradle-user-home/
+
+/artifacts/

@@ -2,7 +2,8 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {AppState, BackHandler, Linking, PermissionsAndroid, Platform, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {Camera, useCameraDevice, useCameraFormat} from 'react-native-vision-camera';
-import {MenuRagIndex, Sonkkeut, useSonkkeut} from 'react-native-sonkkeut';
+import {MenuRagIndex, Sonkkeut, useSonkkeut, isWalkthrough} from './src/walkthroughRuntime';
+import {Walkthrough, virtualScreenNames} from './src/Walkthrough';
 import type {GuidanceEvent, MenuRagResult, ModelDownloadProgress, ScreenStructure, SpeechModelStatus} from 'react-native-sonkkeut';
 import type {Action, MenuItem} from './src/domain';
 import {isReadableElement, OrderFlow, parseOrder, screenReading} from './src/domain';
@@ -45,7 +46,7 @@ export default function App() {
   const [code, setCode] = useState(DEFAULT_STORE_CODE);
   const [menu, setMenu] = useState<MenuItem[]>(DEFAULT_MENU);
   const [serverConfig, setServerConfig] = useState<ServerConfig>();
-  const {connection, reconnect} = useBackendConnection(serverConfig, foreground);
+  const {connection, reconnect} = useBackendConnection(isWalkthrough() ? undefined : serverConfig, foreground);
   const connectionMatches = connection.configKey === JSON.stringify([serverConfig?.server, serverConfig?.code]);
   const [guidance, setGuidance] = useState<{action: Action; event: GuidanceEvent}>();
   const [captions, setCaptions] = useState<string[]>([]);
@@ -192,11 +193,11 @@ export default function App() {
       if (!mounted) {return;}
       const saved = restoreSettings(raw ? JSON.parse(raw) : undefined);
       savedSettings.current = saved;
-      setServer(saved.server); setCode(saved.code); setStatsEnabled(saved.statsEnabled);
+      setServer(saved.server); setCode(saved.code); setStatsEnabled(isWalkthrough() ? false : saved.statsEnabled);
       setThemeName(saved.theme); setWideCamera(saved.wideCamera); setLowVision(saved.lowVision);
       setTextSize(saved.textSize); setVoiceEnabled(saved.voiceEnabled); setVibrationEnabled(saved.vibrationEnabled); setSpeechSpeed(saved.speechSpeed);
       setServerConfig({server: saved.server, code: saved.code});
-      statsEnabledRef.current = saved.statsEnabled === true;
+      statsEnabledRef.current = !isWalkthrough() && saved.statsEnabled === true;
     }).catch(() => {if (mounted) {setServerConfig({server: BACKEND_URL, code: DEFAULT_STORE_CODE});}});
     const sub = AppState.addEventListener('change', state => {
       setForeground(state === 'active');
@@ -253,6 +254,7 @@ export default function App() {
   }, [ai.result?.target_missing, running, flow]);
 
   function record(completed: boolean) {
+    if (isWalkthrough()) {return;}
     if (recorded.current) {return;}
     recorded.current = true;
     if (!statsEnabledRef.current || !sessionConfig.current.server) {return;}
@@ -265,8 +267,8 @@ export default function App() {
   }
   async function start() {
     if (Platform.OS !== 'android') {flow.enter('SE', '안드로이드 기기에서 실행해 주세요.'); refresh(); return;}
-    const camera = await Camera.requestCameraPermission();
-    await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+    const camera = isWalkthrough() ? 'granted' : await Camera.requestCameraPermission();
+    if (!isWalkthrough()) {await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);}
     if (camera !== 'granted') {
       flow.enter('SE', '카메라 권한이 필요합니다. 설정에서 권한을 허용해 주세요.'); Sonkkeut.announce(flow.message); refresh(); return;
     }
@@ -392,7 +394,7 @@ export default function App() {
     });
     return () => sub.remove();
   });
-  const statusText = online ? '● 서버 연결됨' : connectionStatus === 'checking' ? '자동 연결 확인 중' : connectionStatus === 'error' ? '매장 설정 확인 필요' : connectionMatches && connection.menu ? '오프라인 · 저장 메뉴 사용' : '오프라인 · 연결 재시도';
+  const statusText = isWalkthrough() ? '체험 모드 · 카메라/음성/서버 입력은 가상입니다' : online ? '● 서버 연결됨' : connectionStatus === 'checking' ? '자동 연결 확인 중' : connectionStatus === 'error' ? '매장 설정 확인 필요' : connectionMatches && connection.menu ? '오프라인 · 저장 메뉴 사용' : '오프라인 · 연결 재시도';
   const mainCaption = cameraError ? flow.message : paused || flow.state === 'S5' || flow.state === 'S6' ? guide.detail : verification && flow.state === 'SE' ? verification.text : guidance?.action === flow.action && guidance?.event.speak ? guidance.event.speak : !ai.result?.found && ai.result?.hint && ['S1', 'S2'].includes(flow.state) ? ai.result.hint : flow.message;
   return <ThemeContext.Provider value={theme}><SafeAreaView style={styles.root}>
     <StatusBar barStyle={themeName === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={colors.background}/>
@@ -404,7 +406,7 @@ export default function App() {
       <View style={styles.connection}><Text numberOfLines={1} style={styles.connectionText}>{statusText}{!running && connectionMatches && connection.menu ? ` · ${connection.menu.store_name}` : ''}</Text></View>
       <View style={styles.main} testID="main-no-scroll">
         <View style={styles.preview} testID="portrait-camera" onLayout={e => setPreview(e.nativeEvent.layout)}>
-          {running && device && permission && !cameraError ? <Camera style={StyleSheet.absoluteFill} device={device} zoom={zoom} format={format} fps={15} pixelFormat="yuv" resizeMode="contain" outputOrientation="preview" isActive={ai.ready && !paused && foreground && flow.state !== 'S6'} frameProcessor={ai.frameProcessor} onError={() => {
+          {isWalkthrough() ? <View style={styles.placeholder}><Text style={styles.placeholderTitle}>{running ? virtualScreenNames[flow.screen?.screen_type ?? ''] || '화면 인식 대기' : '이벤트 체험'}</Text><Text style={styles.placeholderBody}>{running ? flow.action?.target.text || '아래 임시 버튼으로 진행하세요' : '실제 키오스크 없이 주문 흐름을 둘러보세요'}</Text></View> : running && device && permission && !cameraError ? <Camera style={StyleSheet.absoluteFill} device={device} zoom={zoom} format={format} fps={15} pixelFormat="yuv" resizeMode="contain" outputOrientation="preview" isActive={ai.ready && !paused && foreground && flow.state !== 'S6'} frameProcessor={ai.frameProcessor} onError={() => {
             generation.current++; applied.current = undefined; setGuidance(undefined); setListening(false); Sonkkeut.cancelListening(); Sonkkeut.clearTarget(); Sonkkeut.silence(); flow.screen = undefined;
             if (ultraWide && !wideFailed) {setWideFailed(true); flow.recover(); Sonkkeut.requestKeyframe(); refresh(); return;}
             flow.paused = true; setPaused(true); setCameraError(true); flow.enter('SE', '카메라를 열지 못했습니다. 다른 카메라 앱을 닫고 다시 시도해 주세요.'); refresh();
@@ -476,11 +478,12 @@ export default function App() {
           {flow.confirmed ? <Text style={styles.body}>{progress.total}개 중 {progress.completed}개 담기 확인</Text> : <Button title="네, 이 주문으로 안내 시작" onPress={confirmOrder}/>}
         </View>}
         {!flow.confirmed && <View style={styles.card}>
+          {isWalkthrough() && <><Text style={styles.small}>임시 주문 예시 · 직접 입력도 가능합니다</Text><Button title="예시 · 아메리카노 1잔 포장" onPress={() => submit('아메리카노 한 잔 포장')}/><Button title="예시 · 따뜻한 아메리카노 2잔 + 아이스 라떼 1잔" onPress={() => submit('따뜻한 아메리카노 두 잔 그리고 아이스 카페라떼 한 잔 포장')}/><Button title="예시 · 없는 메뉴 오류" secondary onPress={() => submit('망고 주스 한 잔')}/></>}
           <Text accessibilityRole="header" style={styles.sectionTitle}>어떤 메뉴를 주문할까요?</Text>
           <Text accessibilityLiveRegion="polite" style={styles.body}>{flow.message}</Text>
-          <Button title={listening ? '주문을 듣고 처리하고 있습니다' : '자체 모델로 말로 주문하기'} onPress={() => {listen();}} disabled={listening || !speechModel?.ready || !foreground}/>
+          <Button title={listening ? '주문을 듣고 처리하고 있습니다' : isWalkthrough() ? '가상 음성 주문 예시 받기' : '자체 모델로 말로 주문하기'} onPress={() => {listen();}} disabled={listening || !speechModel?.ready || !foreground}/>
           {!speechModel?.ready && <Button title="음성 모델 준비 열기" secondary onPress={() => {setSpeechSettings(true); openPage('settings');}}/>}
-          <Button title="기기 음성 인식으로 주문하기" secondary onPress={() => {listen('system');}} disabled={listening || modelDownloading || modelPreparing || !foreground}/>
+          <Button title={isWalkthrough() ? "가상 음성 · 예시 다시 받기" : "기기 음성 인식으로 주문하기"} secondary onPress={() => {listen('system');}} disabled={listening || modelDownloading || modelPreparing || !foreground}/>
             {listening && speechProvider === '자체 음성 인식' && <Button title={finishingSpeech ? '말씀하신 주문을 텍스트로 바꾸고 있습니다' : '말하기 완료'} secondary disabled={finishingSpeech} onPress={() => {setFinishingSpeech(true); Sonkkeut.finishListening();}}/>}
           {listening && <Button title="음성 입력 취소" secondary onPress={() => {generation.current++; setListening(false); Sonkkeut.cancelListening();}}/>}
             <TextInput accessibilityLabel="주문 문장" editable={!listening} placeholder="따뜻한 아메리카노 두 잔 포장" placeholderTextColor={colors.muted} value={order} onChangeText={value => {setSpeechResult(undefined); setOrder(value);}} style={styles.input} multiline/>
@@ -536,7 +539,7 @@ export default function App() {
             <TextInput accessibilityLabel="매장 코드" editable={!running} autoCapitalize="characters" autoCorrect={false} value={code} onChangeText={setCode} placeholder="매장 코드 6자리 (선택)" placeholderTextColor={colors.muted} style={styles.input}/>
             <Button title="설정 저장·자동 연결" onPress={() => {saveServer();}} disabled={running}/>
           </>}
-          <View style={styles.row}><Text style={[styles.body, styles.flex]}>익명 통계 전송</Text><Switch accessibilityLabel="익명 통계 전송 동의" value={statsEnabled} trackColor={{false: colors.line, true: colors.accent}} thumbColor={colors.ink} onValueChange={value => {
+          <View style={styles.row}><Text style={[styles.body, styles.flex]}>익명 통계 전송</Text><Switch accessibilityLabel="익명 통계 전송 동의" disabled={isWalkthrough()} value={statsEnabled} trackColor={{false: colors.line, true: colors.accent}} thumbColor={colors.ink} onValueChange={value => {
             statsEnabledRef.current = value; setStatsEnabled(value); savePreference({statsEnabled: value});
             if (!value) {clearUsage().catch(() => {});} else if (online) {flushUsage().catch(() => {});}
           }}/></View>
@@ -547,5 +550,6 @@ export default function App() {
         </View>
       </>}
     </ScrollView>}
+  {isWalkthrough() && <Walkthrough flow={flow} running={running} paused={paused} page={page} restart={end}/>}
   </SafeAreaView></ThemeContext.Provider>;
 }
